@@ -1,0 +1,71 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rigged Royale</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="hud">
+      <div id="status"></div>
+      <div id="instructions">
+        WASD to move
+    <div id="joystick">
+      <div id="joystickArea">
+        <div id="joystickBase">
+          <div id="joystickThumb"></div>
+        </div>
+      </div>
+    </div>
+ â€¢ Shift to sprint â€¢ Mouse to aim â€¢ Click to shoot â€¢ 1/2/3 or Scroll to swap â€¢ R to reload â€¢ E to revive â€¢ M to mute â€¢ Pickups auto â€¢ P to pause
+      </div>
+    </div>
+    <div id="overlay">
+      <div class="panel">
+        <h1 id="title">Rigged Royale</h1>
+        <p id="subtitle">Last one standing wins. Good luck!</p>
+        <div id="diffWrap">
+          <div class="diff-label">Difficulty</div>
+          <div id="diffBtns">
+            <button class="diff" data-diff="easy">Easy</button>
+            <button class="diff" data-diff="normal">Normal</button>
+            <button class="diff" data-diff="hard">Hard</button>
+            <button class="diff selected" data-diff="insane">Insane</button>
+          </div>
+        </div>
+        <div id="modeWrap">
+          <div class="diff-label">Mode</div>
+          <div id="modeBtns">
+            <button class="mode selected" data-mode="solos">Solos</button>
+            <button class="mode" data-mode="duos">Duos</button>
+            <button class="mode" data-mode="trios">Trios</button>
+            <button class="mode" data-mode="squads">Squads</button>
+          </div>
+        </div>
+        <div id="controlWrap">
+          <div class="diff-label">Mobile</div>
+          <label class="toggle" for="joystickToggle">
+            <input type="checkbox" id="joystickToggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-text">Virtual joystick</span>
+          </label>
+          <p class="toggle-hint">Enable an on-screen joystick for touch controls.</p>
+        </div>
+        <div class="actions" id="mainActions">
+          <button id="playBtn">Play</button>
+          <button id="restartBtn" class="secondary hidden">Restart</button>
+        </div>
+        <div class="actions hidden" id="deathActions">
+          <button id="spectateBtn">Spectate</button>
+          <button id="menuBtn" class="secondary">Menu</button>
+        </div>
+      </div>
+    </div>
+    <script src="game.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src='multiplayer.js'></script>
+  </body>
+  </html>
+

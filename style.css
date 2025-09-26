@@ -1,0 +1,129 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0b0e12;
+  color: #e6edf3;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+  cursor: crosshair;
+}
+
+#hud {
+  position: fixed;
+  left: 0; right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+#status {
+  background: rgba(10,12,16,0.65);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  backdrop-filter: blur(6px);
+  align-self: flex-start;
+}
+
+#instructions {
+  opacity: 0.7;
+  font-size: 12px;
+  padding-left: 2px;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(1200px 800px at 50% 20%, rgba(25, 43, 73, 0.6), rgba(7, 10, 14, 0.95));
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+}
+/* When actively playing, always hide overlay regardless of inline/display state */
+body.playing #overlay { display: none !important; }
+
+/* Ensure this overrides the #overlay rule */
+#overlay.hidden { display: none; }
+
+.panel {
+  background: rgba(10,12,16,0.8);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  padding: 26px 30px;
+  text-align: center;
+  width: min(90vw, 520px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+
+.panel h1 { margin: 6px 0 6px; font-size: 32px; }
+.panel p { margin: 0 0 18px; opacity: 0.82; }
+
+/* Difficulty selector */
+#diffWrap { margin: 10px 0 18px; text-align: left; }
+.diff-label { font-size: 12px; opacity: 0.8; margin-bottom: 6px; }
+#diffBtns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+button.diff {
+  background: rgba(20,24,30,0.8);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: none;
+}
+button.diff.selected { border-color: #2aa9ff; outline: 2px solid rgba(42,169,255,0.25); }
+
+/* Team mode selector shares styles */
+#modeWrap { margin: 6px 0 18px; text-align: left; }
+#controlWrap { margin: 6px 0 24px; text-align: left; }
+label.toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+label.toggle input { display: none; }
+.toggle-track { position: relative; width: 48px; height: 26px; border-radius: 20px; background: rgba(255,255,255,0.12); transition: background 0.18s ease; }
+.toggle-thumb { position: absolute; top: 3px; left: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(230,237,243,0.9); box-shadow: 0 2px 6px rgba(0,0,0,0.35); transition: transform 0.18s ease, background 0.18s ease; }
+label.toggle input:checked + .toggle-track { background: rgba(42,169,255,0.7); }
+label.toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); background: #fff; }
+.toggle-text { font-size: 14px; opacity: 0.85; }
+.toggle-hint { margin: 6px 0 0; font-size: 12px; opacity: 0.6; max-width: 100%; }
+
+#modeBtns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+button.mode { background: rgba(20,24,30,0.8); border: 1px solid rgba(255,255,255,0.08); box-shadow: none; }
+button.mode.selected { border-color: #8bff7b; outline: 2px solid rgba(139,255,123,0.2); }
+
+button {
+  background: linear-gradient(180deg, #2aa9ff, #0a6ad6);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(28, 112, 212, 0.35);
+}
+button:hover { filter: brightness(1.05); }
+button:active { transform: translateY(1px); }
+
+.actions { display: flex; gap: 10px; justify-content: center; }
+button.secondary { background: rgba(20,24,30,0.8); border: 1px solid rgba(255,255,255,0.1); box-shadow: none; }
+button.secondary:hover { filter: brightness(1.1); }
+
+.hidden { display: none; }
+
+#joystick { position: fixed; left: 24px; bottom: 24px; width: 200px; height: 200px; display: none; z-index: 600; pointer-events: auto; }
+body.joystick-enabled #joystick { display: block; }
+#joystickArea { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+#joystickBase { position: absolute; left: 50%; top: 50%; width: 150px; height: 150px; margin-left: -75px; margin-top: -75px; border-radius: 50%; background: rgba(16,34,20,0.55); border: 1px solid rgba(255,255,255,0.05); box-shadow: inset 0 0 40px rgba(0,0,0,0.35), 0 12px 28px rgba(0,0,0,0.35); backdrop-filter: blur(6px); transition: box-shadow 0.2s ease; }
+#joystickThumb { position: absolute; left: 50%; top: 50%; width: 68px; height: 68px; margin-left: -34px; margin-top: -34px; border-radius: 50%; background: rgba(42,169,255,0.82); box-shadow: 0 14px 32px rgba(42,169,255,0.35); transform: translate(-50%, -50%); transition: transform 0.12s ease; }
+body.joystick-enabled #joystick.joystick-active #joystickThumb { transition: none; }
+body.joystick-enabled #joystick.joystick-active #joystickBase { box-shadow: inset 0 0 40px rgba(0,0,0,0.35), 0 18px 38px rgba(12,24,18,0.45); }
+body.joystick-enabled:not(.joystick-moving) #joystickBase { animation: joystickPulse 3.6s ease-in-out infinite; }
+@keyframes joystickPulse { 0%, 100% { box-shadow: inset 0 0 40px rgba(0,0,0,0.35), 0 12px 28px rgba(0,0,0,0.35); } 50% { box-shadow: inset 0 0 45px rgba(0,0,0,0.4), 0 16px 32px rgba(0,0,0,0.4); } }
+
