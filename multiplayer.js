@@ -150,6 +150,7 @@
         <input id="mpJoinCode" type="text" maxlength="6" placeholder="Code">
         <button id="mpJoin">Join</button>
         <button id="mpLeave">Leave</button>
+        <button id="mpCopy" title="Copy party code">Copy</button>
       </div>
       <label id="mpReadyWrap" class="mp-inline mp-subtle" style="align-items:center;">
         <input type="checkbox" id="mpReady" style="width:auto;">
@@ -179,6 +180,7 @@
     joinCode: panel.querySelector("#mpJoinCode"),
     joinBtn: panel.querySelector("#mpJoin"),
     leaveBtn: panel.querySelector("#mpLeave"),
+    copyBtn: panel.querySelector("#mpCopy"),
     readyWrap: panel.querySelector("#mpReadyWrap"),
     readyToggle: panel.querySelector("#mpReady"),
     members: panel.querySelector("#mpPartyMembers"),
@@ -255,6 +257,30 @@
     e.preventDefault();
     if (!checkSocket()) return;
     state.socket.emit("party:leave");
+  });
+
+  elements.copyBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!state.party || !state.party.code) {
+      setPartyMessage("No party code to copy", "error");
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(state.party.code);
+      } else {
+        const temp = document.createElement("input");
+        temp.value = state.party.code;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        document.body.removeChild(temp);
+      }
+      setPartyMessage("Party code copied");
+    } catch (err) {
+      console.warn("Failed to copy party code", err);
+      setPartyMessage("Unable to copy code", "error");
+    }
   });
 
   elements.readyToggle.addEventListener("change", () => {
@@ -420,6 +446,7 @@
     elements.joinCode.disabled = !state.connected || hasParty;
     elements.leaveBtn.disabled = !state.connected || !hasParty;
     elements.readyToggle.disabled = !state.connected || !hasParty;
+    elements.copyBtn.disabled = !state.connected || !hasParty;
     elements.readyWrap.style.display = hasParty ? "flex" : "none";
 
     elements.members.innerHTML = "";
