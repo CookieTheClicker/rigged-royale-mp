@@ -150,6 +150,7 @@
         <input id="mpJoinCode" type="text" maxlength="6" placeholder="Code">
         <button id="mpJoin">Join</button>
         <button id="mpLeave">Leave</button>
+        <button id="mpCopy" title="Copy party code">Copy</button>
       </div>
       <label id="mpReadyWrap" class="mp-inline mp-subtle" style="align-items:center;">
         <input type="checkbox" id="mpReady" style="width:auto;">
@@ -179,6 +180,7 @@
     joinCode: panel.querySelector("#mpJoinCode"),
     joinBtn: panel.querySelector("#mpJoin"),
     leaveBtn: panel.querySelector("#mpLeave"),
+    copyBtn: panel.querySelector("#mpCopy"),
     readyWrap: panel.querySelector("#mpReadyWrap"),
     readyToggle: panel.querySelector("#mpReady"),
     members: panel.querySelector("#mpPartyMembers"),
@@ -202,7 +204,117 @@
     pingTimer: null,
     stateSynced: false,
     lastLatency: null,
+    matchSeed: null,
   };
+
+  const matchSeedRequests = new Map();
+  let matchSeedPromise = null;
+
+  const makeRequestId = () => Math.random().toString(36).slice(2, 10);
+
+  function sanitizeMatchSeed(payload) {
+    if (!payload || typeof payload.seed !== "string") return null;
+    const seed = payload.seed.slice(0, 80);
+    const counter = Number.isFinite(Number(payload.counter)) ? Number(payload.counter) : 0;
+    const issuedAt = Number.isFinite(Number(payload.issuedAt)) ? Number(payload.issuedAt) : Date.now();
+    const by = typeof payload.by === "string" ? payload.by : null;
+    return { seed, counter, issuedAt, by };
+  }
+
+  function resolveMatchSeedRequests(result, requestId) {
+    if (requestId && matchSeedRequests.has(requestId)) {
+      const entry = matchSeedRequests.get(requestId);
+      matchSeedRequests.delete(requestId);
+      clearTimeout(entry.timeout);
+      matchSeedPromise = null;
+      entry.resolve(result);
+      return;
+    }
+    if (!matchSeedRequests.size) return;
+    for (const [id, entry] of matchSeedRequests.entries()) {
+      matchSeedRequests.delete(id);
+      clearTimeout(entry.timeout);
+      entry.resolve(result);
+    }
+    matchSeedPromise = null;
+  }
+
+  function resetMatchSeed() {
+    state.matchSeed = null;
+    if (matchSeedPromise) {
+      matchSeedPromise = null;
+    }
+    if (!matchSeedRequests.size) return;
+    for (const [id, entry] of matchSeedRequests.entries()) {
+      matchSeedRequests.delete(id);
+      clearTimeout(entry.timeout);
+      entry.resolve(null);
+    }
+  }
+
+  function ensureMatchSeed(options = {}) {
+    if (!state.socket || !state.socket.connected || !state.party || !state.party.code) {
+      return Promise.resolve(null);
+    }
+    const fresh = Boolean(options && options.fresh);
+    if (!fresh && state.matchSeed) {
+      return Promise.resolve(state.matchSeed);
+    }
+    if (fresh) {
+      state.matchSeed = null;
+    }
+    if (matchSeedPromise) return matchSeedPromise;
+    const requestId = makeRequestId();
+    matchSeedPromise = new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        if (matchSeedRequests.has(requestId)) {
+          matchSeedRequests.delete(requestId);
+        }
+        matchSeedPromise = null;
+        resolve(state.matchSeed || null);
+      }, 2500);
+      matchSeedRequests.set(requestId, {
+        timeout,
+        resolve: (value) => {
+          if (matchSeedRequests.has(requestId)) {
+            matchSeedRequests.delete(requestId);
+          }
+          clearTimeout(timeout);
+          matchSeedPromise = null;
+          resolve(value);
+        },
+      });
+      state.socket.emit("match:request", { requestId });
+    });
+    return matchSeedPromise;
+  }
+
+  const mpBridge = {
+    getPartyContext: () => {
+      if (!state.party || !state.party.code) return null;
+      const members = Array.isArray(state.party.members)
+        ? state.party.members.map((member) => ({
+            id: member && member.id ? member.id : null,
+            name: member && member.name ? String(member.name) : "",
+            ready: Boolean(member && member.ready),
+          }))
+        : [];
+      return {
+        code: state.party.code,
+        hostId: state.party.hostId || null,
+        createdAt: state.party.createdAt || null,
+        members,
+        maxSize: Number.isFinite(Number(state.party.maxSize))
+          ? Number(state.party.maxSize)
+          : null,
+      };
+    },
+    getSelfId: () => state.selfId,
+    getLatestMatchSeed: () => (state.matchSeed ? { ...state.matchSeed } : null),
+    ensureMatchSeed: (opts = {}) => ensureMatchSeed(opts),
+  };
+
+  window.RiggedRoyale = Object.assign(window.RiggedRoyale || {}, { mp: mpBridge });
 
   const storedName = localStorage.getItem("rrDisplayName");
   if (storedName) {
@@ -257,6 +369,30 @@
     state.socket.emit("party:leave");
   });
 
+  elements.copyBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!state.party || !state.party.code) {
+      setPartyMessage("No party code to copy", "error");
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(state.party.code);
+      } else {
+        const temp = document.createElement("input");
+        temp.value = state.party.code;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        document.body.removeChild(temp);
+      }
+      setPartyMessage("Party code copied");
+    } catch (err) {
+      console.warn("Failed to copy party code", err);
+      setPartyMessage("Unable to copy code", "error");
+    }
+  });
+
   elements.readyToggle.addEventListener("change", () => {
     if (!checkSocket()) return;
     state.socket.emit("party:ready", {
@@ -302,6 +438,7 @@
     state.connected = false;
     state.stateSynced = false;
     state.lastLatency = null;
+    resetMatchSeed();
     updateStatus();
   }
 
@@ -420,6 +557,7 @@
     elements.joinCode.disabled = !state.connected || hasParty;
     elements.leaveBtn.disabled = !state.connected || !hasParty;
     elements.readyToggle.disabled = !state.connected || !hasParty;
+    elements.copyBtn.disabled = !state.connected || !hasParty;
     elements.readyWrap.style.display = hasParty ? "flex" : "none";
 
     elements.members.innerHTML = "";
@@ -506,6 +644,7 @@
       state.party = null;
       state.stateSynced = false;
       state.lastLatency = null;
+      resetMatchSeed();
       updateStatus();
       updatePartyUI();
       logLine("Disconnected from server.");
@@ -560,6 +699,11 @@
       } else if (!current) {
         state.stateSynced = false;
       }
+      if (!current) {
+        resetMatchSeed();
+      } else if (!previous && state.socket && state.socket.connected) {
+        state.socket.emit("match:get");
+      }
     });
 
     socket.on("party:error", ({ message }) => {
@@ -572,6 +716,7 @@
       logLine(`Party created (${code})`);
       state.stateSynced = false;
       socket.emit("state:request");
+      resetMatchSeed();
     });
 
     socket.on("party:joined", ({ code }) => {
@@ -579,6 +724,21 @@
       logLine(`Joined party ${code}`);
       state.stateSynced = false;
       socket.emit("state:request");
+      resetMatchSeed();
+    });
+
+    socket.on("match:seed", (payload = {}) => {
+      const sanitized = sanitizeMatchSeed(payload);
+      if (!sanitized) return;
+      state.matchSeed = sanitized;
+      resolveMatchSeedRequests(sanitized, payload.requestId);
+    });
+
+    socket.on("match:seed:ack", (payload = {}) => {
+      const sanitized = sanitizeMatchSeed(payload);
+      if (!sanitized) return;
+      state.matchSeed = sanitized;
+      resolveMatchSeedRequests(sanitized, payload.requestId);
     });
 
     socket.on("identity:ack", ({ name }) => {
@@ -621,6 +781,7 @@
       state.stateSynced = false;
       socket.emit("party:sync");
       socket.emit("state:request");
+      socket.emit("match:get");
       if (state.name) socket.emit("identity:set", { name: state.name });
       updateStatus();
     });
