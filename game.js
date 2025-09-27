@@ -243,6 +243,7 @@
     teams: [],
     spectating: false,
     graceTimer: 0,
+    remotePlayers: new Map(),
   };
 
   function makeTeam(id, color) { return { id, color, alive: 0 }; }
@@ -268,22 +269,30 @@
   const HEDGE_SWATCHES = ['#26492a','#2d5b31','#214024'];
 
   // Optional local assets (Option A) with safe fallbacks
+  function assetPath(folder, name) {
+    // ensure exactly one extension
+    let file = String(name);
+    if (!/\.(png|jpg|jpeg|gif|webp)$/i.test(file)) file += '.png';
+
+    // normalize slashes; enforce lowercase folder "props"
+    const f = String(folder || '').replace(/\\/g, '/');
+    const folderNorm = f.toLowerCase() === 'props' ? 'props' : f;
+    return `/assets/${folderNorm}/${file}`;
+  }
+
   const ASSET_PATHS = {
-    // Note: we try multiple case/extension variants below
-    water: 'assets/tiles/puddle_1.png',
-    bush: ['assets/props/bush_1.png','assets/props/bush_2.png','assets/props/bush_3.png'],
-    tree: ['assets/props/tree_1.png','assets/props/tree_2.png','assets/props/tree_3.png'],
-    crate: ['assets/props/crate_1.png','assets/props/crate_2.png'],
-    stone: ['assets/props/stone_1.png','assets/props/stone_2.png','assets/props/stone_3.png'],
-    puddle: ['assets/props/puddle_1.png','assets/props/puddle_2.png','assets/props/puddle_3.png'],
+    water: assetPath('tiles', 'puddle_1'),
+    bush: ['bush_1', 'bush_2', 'bush_3'].map((name) => assetPath('props', name)),
+    tree: ['tree_1', 'tree_2', 'tree_3'].map((name) => assetPath('props', name)),
+    crate: ['crate_1', 'crate_2'].map((name) => assetPath('props', name)),
+    stone: ['stone_1', 'stone_2', 'stone_3'].map((name) => assetPath('props', name)),
+    puddle: ['puddle_1', 'puddle_2', 'puddle_3'].map((name) => assetPath('props', name)),
   };
   const ASSETS = { water: null, bush: [], tree: [], crate: [], stone: [], puddle: [] };
   function withCaseVariants(path){
-    const out = new Set([path]);
-    if (path.includes('/props/')) out.add(path.replace('/props/','/Props/'));
-    if (path.includes('/tiles/')) out.add(path.replace('/tiles/','/Tiles/'));
-    if (path.toLowerCase().endsWith('.png')) out.add(path + '.png');
-    return Array.from(out);
+    if (!path) return [];
+    const normalized = String(path).replace(/\\/g, '/');
+    return [normalized];
   }
   function loadWithFallback(basePath, onSuccess){
     const variants = withCaseVariants(basePath);
