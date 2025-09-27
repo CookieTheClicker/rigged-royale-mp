@@ -245,6 +245,160 @@
     graceTimer: 0,
     remotePlayers: new Map(),
   };
+﻿  const REMOTE_TIMEOUT_MS = 7000;
+  const REMOTE_LERP_SPEED = 10;
+  let localNetworkId = null;
+
+  const nowMillis = () => (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+
+  const safeNumber = (value, min, max, fallback = 0) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    let result = num;
+    if (typeof min === "number") result = Math.max(min, result);
+    if (typeof max === "number") result = Math.min(max, result);
+    return result;
+  };
+
+  function captureLocalState() {
+    const player = world.player;
+    if (!player) return null;
+    return {
+      x: safeNumber(player.x, -5000, CONFIG.mapW + 5000, 0),
+      y: safeNumber(player.y, -5000, CONFIG.mapH + 5000, 0),
+      vx: safeNumber(player.vx, -4000, 4000, 0),
+      vy: safeNumber(player.vy, -4000, 4000, 0),
+      hp: safeNumber(player.hp, -10, 250, 100),
+      alive: Boolean(player.alive),
+      downed: Boolean(player.downed),
+      stamina: safeNumber(player.stamina, 0, 100, 100),
+      teamId: typeof player.teamId === "number" ? player.teamId : null,
+      teamColor: player.teamColor || null,
+      weapon: player.weapon || null,
+      spectator: Boolean(player.spectator),
+      mode: selectedMode,
+      diff: selectedDiff,
+    };
+  }
+
+  function ensureRemotePlayer(id) {
+    let remote = world.remotePlayers.get(id);
+    if (!remote) {
+      remote = {
+        id,
+        x: 0,
+        y: 0,
+        targetX: 0,
+        targetY: 0,
+        vx: 0,
+        vy: 0,
+        hp: 100,
+        stamina: 100,
+        alive: true,
+        downed: false,
+        r: 16,
+        teamId: -999,
+        teamColor: '#8bbcff',
+        displayName: '',
+        snapshot: null,
+        lastSeen: 0,
+        spectator: false,
+        weapon: null,
+        initialized: false,
+      };
+      world.remotePlayers.set(id, remote);
+    }
+    return remote;
+  }
+
+  function applyRemoteSnapshot(snapshot) {
+    if (!snapshot || !snapshot.id) return;
+    const id = String(snapshot.id);
+    if (localNetworkId && id === localNetworkId) return;
+    const remote = ensureRemotePlayer(id);
+    if (snapshot.name) remote.displayName = String(snapshot.name).slice(0, 24);
+    if (snapshot.teamColor) remote.teamColor = String(snapshot.teamColor).slice(0, 32);
+    if (Number.isFinite(Number(snapshot.x))) remote.targetX = safeNumber(snapshot.x, -5000, CONFIG.mapW + 5000, Number(snapshot.x));
+    if (Number.isFinite(Number(snapshot.y))) remote.targetY = safeNumber(snapshot.y, -5000, CONFIG.mapH + 5000, Number(snapshot.y));
+    const prev = remote.snapshot || {};
+    remote.snapshot = {
+      vx: safeNumber(snapshot.vx, -4000, 4000, Number.isFinite(prev.vx) ? prev.vx : remote.vx),
+      vy: safeNumber(snapshot.vy, -4000, 4000, Number.isFinite(prev.vy) ? prev.vy : remote.vy),
+      hp: safeNumber(snapshot.hp, -10, 250, Number.isFinite(prev.hp) ? prev.hp : remote.hp),
+      stamina: safeNumber(snapshot.stamina, 0, 100, Number.isFinite(prev.stamina) ? prev.stamina : (typeof remote.stamina === 'number' ? remote.stamina : 100)),
+      alive: snapshot.alive !== undefined ? !!snapshot.alive : (typeof prev.alive === 'boolean' ? prev.alive : remote.alive),
+      downed: snapshot.downed !== undefined ? !!snapshot.downed : (typeof prev.downed === 'boolean' ? prev.downed : remote.downed),
+      spectator: snapshot.spectator !== undefined ? !!snapshot.spectator : (typeof prev.spectator === 'boolean' ? prev.spectator : remote.spectator),
+      teamId: Number.isFinite(Number(snapshot.teamId)) ? Math.round(Number(snapshot.teamId)) : (Number.isFinite(prev.teamId) ? prev.teamId : remote.teamId),
+      teamColor: remote.teamColor,
+      weapon: typeof snapshot.weapon === 'string' ? snapshot.weapon : (typeof prev.weapon === 'string' ? prev.weapon : remote.weapon),
+      name: remote.displayName,
+      updatedAt: Number.isFinite(Number(snapshot.updatedAt)) ? Number(snapshot.updatedAt) : nowMillis(),
+    };
+    remote.teamId = remote.snapshot.teamId ?? remote.teamId;
+    remote.spectator = remote.snapshot.spectator ?? remote.spectator;
+    remote.weapon = remote.snapshot.weapon ?? remote.weapon;
+    remote.lastSeen = remote.snapshot.updatedAt;
+    if (!remote.initialized) {
+      if (typeof remote.targetX === 'number') remote.x = remote.targetX;
+      if (typeof remote.targetY === 'number') remote.y = remote.targetY;
+      remote.initialized = true;
+    }
+  }
+
+  function removeRemotePlayer(id) {
+    if (!id) return;
+    world.remotePlayers.delete(String(id));
+  }
+
+  function clearRemotePlayers() {
+    world.remotePlayers.clear();
+  }
+
+  function updateRemoteEntities(dt) {
+    if (!world.remotePlayers.size) return;
+    const now = nowMillis();
+    const lerpFactor = Math.min(1, dt * REMOTE_LERP_SPEED);
+    for (const remote of world.remotePlayers.values()) {
+      if (typeof remote.targetX === 'number') {
+        remote.x += (remote.targetX - remote.x) * lerpFactor;
+      }
+      if (typeof remote.targetY === 'number') {
+        remote.y += (remote.targetY - remote.y) * lerpFactor;
+      }
+      const snap = remote.snapshot;
+      if (snap && typeof snap === 'object') {
+        if (snap.vx !== undefined) remote.vx = snap.vx;
+        if (snap.vy !== undefined) remote.vy = snap.vy;
+        if (snap.hp !== undefined) remote.hp = snap.hp;
+        if (snap.alive !== undefined) remote.alive = snap.alive;
+        if (snap.downed !== undefined) remote.downed = snap.downed;
+        if (snap.stamina !== undefined) remote.stamina = snap.stamina;
+        if (snap.teamColor) remote.teamColor = snap.teamColor;
+        if (snap.name) remote.displayName = snap.name;
+        if (snap.spectator !== undefined) remote.spectator = snap.spectator;
+        if (snap.weapon) remote.weapon = snap.weapon;
+        remote.lastSeen = snap.updatedAt || now;
+      }
+    }
+    for (const [id, remote] of Array.from(world.remotePlayers.entries())) {
+      if (now - (remote.lastSeen || 0) > REMOTE_TIMEOUT_MS) {
+        world.remotePlayers.delete(id);
+      }
+    }
+  }
+
+  const networkBridge = {
+    captureLocalState,
+    applyRemoteSnapshot,
+    removeRemotePlayer,
+    clearRemotePlayers,
+    setLocalId: (id) => { localNetworkId = id ? String(id) : null; },
+    listRemoteIds: () => Array.from(world.remotePlayers.keys()),
+  };
+
+  window.RiggedRoyale = Object.assign(window.RiggedRoyale || {}, { net: networkBridge });
+
 
   function makeTeam(id, color) { return { id, color, alive: 0 }; }
   function assignTeam(ent, team) { ent.teamId = team.id; ent.teamColor = team.color; team.alive++; }
@@ -666,6 +820,7 @@
     generateWorld();
     world.bullets = [];
     world.bots = [];
+    clearRemotePlayers();
     world.teams = [];
     let colorIdx = 0; const nextColor = () => TEAM_COLORS[colorIdx++ % TEAM_COLORS.length];
     const px = randi(200, CONFIG.mapW-200), py = randi(200, CONFIG.mapH-200);
@@ -1081,6 +1236,7 @@
     // Friction
     if (p) { p.vx *= CONFIG.baseFriction; p.vy *= CONFIG.baseFriction; }
     for (const b of world.bots) { b.vx *= CONFIG.baseFriction; b.vy *= CONFIG.baseFriction; }
+    updateRemoteEntities(dt);
 
     // Bullets
     const survivors = [];
@@ -1354,23 +1510,37 @@
     const drawEntity = (e, color) => {
       ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI*2); ctx.fill();
-      // direction marker
       if (e.alive) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + e.vx*0.08, e.y + e.vy*0.08); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + e.vx*0.08, e.y + e.vy*0.08); ctx.stroke();
       }
-      // health bar
       const hw = 32, hh = 4;
       ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(e.x-hw/2, e.y-e.r-14, hw, hh);
       if (!e.downed) {
-        ctx.fillStyle = COLORS.health; ctx.fillRect(e.x-hw/2, e.y-e.r-14, hw*(clamp(e.hp,0,100)/100), hh);
+        ctx.fillStyle = COLORS.health; ctx.fillRect(e.x-hw/2, e.y-e.r-14, hw*(clamp((e.hp || 0),0,100)/100), hh);
       } else {
-        ctx.fillStyle = '#f7c46c'; // revive progress / bleed bar
+        ctx.fillStyle = '#f7c46c';
         const remain = Math.max(0, e.bleed) / 45;
         ctx.fillRect(e.x-hw/2, e.y-e.r-14, hw*(1-remain), hh);
+      }
+      if (e.displayName) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = '12px system-ui';
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillText(e.displayName, e.x, e.y - e.r - 20);
+        ctx.fillStyle = '#f4f7ff';
+        ctx.fillText(e.displayName, e.x, e.y - e.r - 21);
+        ctx.restore();
       }
     };
     const p = world.player;
     for (const b of world.bots) if (b.alive) drawEntity(b, b.teamColor || COLORS.bot);
+    for (const remote of world.remotePlayers.values()) {
+      if (!remote) continue;
+      if (remote.spectator) continue;
+      drawEntity(remote, remote.teamColor || '#8bbcff');
+    }
     if (p) drawEntity(p, p.teamColor || COLORS.player);
 
     // (props and water rendering reverted)
@@ -1381,21 +1551,34 @@
     // Offscreen teammate arrows
     if (p) {
       const pad = 18; const cw = w, ch = h, cx = cw/2, cy = ch/2;
-      for (const mate of world.bots) {
-        if (!mate.alive || mate.teamId !== p.teamId) continue;
-        const sx = mate.x - world.camera.x, sy = mate.y - world.camera.y;
-        if (sx>=0 && sx<=cw && sy>=0 && sy<=ch) continue;
-        const dx = sx - cx, dy = sy - cy; if (!dx && !dy) continue;
-        const tVals = []; if (dx) { tVals.push((pad - cx)/dx); tVals.push((cw - pad - cx)/dx); } if (dy) { tVals.push((pad - cy)/dy); tVals.push((ch - pad - cy)/dy); }
-        let t = Infinity; for (const tt of tVals) if (tt>0) t = Math.min(t, tt); if (!isFinite(t)) continue;
-        const ex = cx + dx*t, ey = cy + dy*t; const angle = Math.atan2(dy, dx);
-        ctx.save(); ctx.translate(ex, ey); ctx.rotate(angle); ctx.fillStyle = mate.teamColor || '#74f7a9';
+      const drawArrow = (ent, tint) => {
+        if (!ent) return;
+        const active = ent.alive || ent.downed;
+        if (!active) return;
+        const sx = ent.x - world.camera.x, sy = ent.y - world.camera.y;
+        if (sx>=0 && sx<=cw && sy>=0 && sy<=ch) return;
+        const dx = sx - cx, dy = sy - cy; if (!dx && !dy) return;
+        const tVals = [];
+        if (dx) { tVals.push((pad - cx)/dx); tVals.push((cw - pad - cx)/dx); }
+        if (dy) { tVals.push((pad - cy)/dy); tVals.push((ch - pad - cy)/dy); }
+        let t = Infinity; for (const tt of tVals) if (tt > 0) t = Math.min(t, tt);
+        if (!isFinite(t)) return;
+        const ex = cx + dx*t, ey = cy + dy*t;
+        ctx.save(); ctx.translate(ex, ey); ctx.rotate(Math.atan2(dy, dx)); ctx.fillStyle = tint;
         ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-12,7); ctx.lineTo(-12,-7); ctx.closePath(); ctx.fill(); ctx.restore();
+      };
+      for (const mate of world.bots) {
+        if (!mate || !mate.alive || mate.teamId !== p.teamId) continue;
+        drawArrow(mate, mate.teamColor || '#74f7a9');
+      }
+      for (const remote of world.remotePlayers.values()) {
+        if (!remote || remote.teamId !== p.teamId || remote.spectator) continue;
+        drawArrow(remote, remote.teamColor || '#8bbcff');
       }
     }
     // HUD text (clean header)
-    const aliveBots = world.bots.filter(b=>b.alive).length;
-    const aliveCount = aliveBots + (p && p.alive ? 1 : 0);
+    const aliveBots = world.bots.filter(b=>b.alive).length; const aliveRemotes = Array.from(world.remotePlayers.values()).filter(r => r && r.alive && !r.spectator).length;
+    const aliveCount = aliveBots + aliveRemotes + (p && p.alive ? 1 : 0);
     const W = p ? WEAPONS[p.weapon] : WEAPONS.rifle;
     let zoneTxt = `Zone: ${world.phase+1}/${CONFIG.zone.phases}`;
     if (world.zoneState.mode === 'hold') zoneTxt += ` (hold ${Math.ceil(world.zoneState.timer)}s)`;
@@ -1419,6 +1602,7 @@
     ctx.beginPath(); ctx.strokeStyle = 'rgba(80,200,255,0.8)';
     ctx.arc(world.zone.x*sx, world.zone.y*sy, world.zone.r*sx, 0, Math.PI*2); ctx.stroke();
     for (const b of world.bots) if (b.alive) { ctx.fillStyle = b.teamColor || 'rgba(247,113,113,0.9)'; ctx.fillRect(b.x*sx-1, b.y*sy-1, 2, 2); }
+    for (const remote of world.remotePlayers.values()) { if (!remote || remote.spectator) continue; if (!remote.alive && !remote.downed) continue; ctx.fillStyle = remote.teamColor || '#8bbcff'; ctx.fillRect(remote.x*sx-1, remote.y*sy-1, 2, 2); }
     if (p) { ctx.fillStyle = p.teamColor || '#74f7a9'; ctx.fillRect(p.x*sx-2, p.y*sy-2, 4, 4); }
     ctx.restore();
 

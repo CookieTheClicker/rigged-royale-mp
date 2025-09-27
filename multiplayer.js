@@ -11,6 +11,7 @@
   window.__riggedMpInit = true;
 
   const host = document.body;
+  const netBridge = (window.RiggedRoyale && window.RiggedRoyale.net) || null;
 
   const style = document.createElement("style");
   style.textContent = `
@@ -197,6 +198,10 @@
     party: null,
     name: "",
     messageTimer: null,
+    stateLoop: null,
+    pingTimer: null,
+    stateSynced: false,
+    lastLatency: null,
   };
 
   const storedName = localStorage.getItem("rrDisplayName");
@@ -275,11 +280,29 @@
 
   function cleanup() {
     if (state.socket) {
-      state.socket.disconnect();
+      try {
+        state.socket.disconnect();
+      } catch (_) {}
+      state.socket = null;
     }
     if (state.messageTimer) {
       clearTimeout(state.messageTimer);
+      state.messageTimer = null;
     }
+    stopPingLoop();
+    stopStateLoop();
+    if (netBridge && typeof netBridge.clearRemotePlayers === "function") {
+      netBridge.clearRemotePlayers();
+    }
+    if (netBridge && typeof netBridge.setLocalId === "function") {
+      netBridge.setLocalId(null);
+    }
+    state.selfId = null;
+    state.party = null;
+    state.connected = false;
+    state.stateSynced = false;
+    state.lastLatency = null;
+    updateStatus();
   }
 
   function cleanName(value) {
@@ -453,6 +476,12 @@
     socket.on("connect", () => {
       state.connected = true;
       state.selfId = socket.id;
+      if (netBridge && typeof netBridge.setLocalId === "function") {
+        netBridge.setLocalId(socket.id);
+      }
+      ensureStateLoop();
+      ensurePingLoop();
+      state.stateSynced = false;
       updateStatus();
       logLine("Connected to multiplayer server.");
       if (state.name) {
@@ -464,9 +493,19 @@
 
     socket.on("disconnect", () => {
       const hadParty = Boolean(state.party && state.party.code);
+      stopPingLoop();
+      stopStateLoop();
+      if (netBridge && typeof netBridge.clearRemotePlayers === "function") {
+        netBridge.clearRemotePlayers();
+      }
+      if (netBridge && typeof netBridge.setLocalId === "function") {
+        netBridge.setLocalId(null);
+      }
       state.connected = false;
       state.selfId = null;
       state.party = null;
+      state.stateSynced = false;
+      state.lastLatency = null;
       updateStatus();
       updatePartyUI();
       logLine("Disconnected from server.");
@@ -506,11 +545,20 @@
     socket.on("party:update", (data) => {
       const previous = state.party && state.party.code;
       state.party = data && data.code ? data : null;
-      updatePartyUI();
       const current = state.party && state.party.code;
+      updatePartyUI();
       if (previous && !current) {
         logLine("Left party.");
         setPartyMessage("Left party");
+        if (netBridge && typeof netBridge.clearRemotePlayers === "function") {
+          netBridge.clearRemotePlayers();
+        }
+        state.stateSynced = false;
+      } else if (current && !state.stateSynced && state.socket && state.socket.connected) {
+        state.socket.emit("state:request");
+        state.stateSynced = true;
+      } else if (!current) {
+        state.stateSynced = false;
       }
     });
 
@@ -522,11 +570,15 @@
       if (code) elements.joinCode.value = code;
       setPartyMessage(`Party created: ${code}`);
       logLine(`Party created (${code})`);
+      state.stateSynced = false;
+      socket.emit("state:request");
     });
 
     socket.on("party:joined", ({ code }) => {
       setPartyMessage(`Joined party ${code}`);
       logLine(`Joined party ${code}`);
+      state.stateSynced = false;
+      socket.emit("state:request");
     });
 
     socket.on("identity:ack", ({ name }) => {
@@ -559,8 +611,18 @@
     });
     socket.on("reconnect", () => {
       logLine("Reconnected.");
+      state.connected = true;
+      state.selfId = socket.id;
+      if (netBridge && typeof netBridge.setLocalId === "function") {
+        netBridge.setLocalId(socket.id);
+      }
+      ensureStateLoop();
+      ensurePingLoop();
+      state.stateSynced = false;
       socket.emit("party:sync");
+      socket.emit("state:request");
       if (state.name) socket.emit("identity:set", { name: state.name });
+      updateStatus();
     });
   }
 
