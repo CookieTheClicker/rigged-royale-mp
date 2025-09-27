@@ -43,66 +43,6 @@ const sanitizeName = (raw) => {
   return trimmed.slice(0, NAME_MAX_LENGTH);
 };
 
-const clampNumber = (value, min, max, fallback = 0) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return fallback;
-  let result = num;
-  if (typeof min === "number") result = Math.max(min, result);
-  if (typeof max === "number") result = Math.min(max, result);
-  return result;
-};
-
-const sanitizePlayerState = (raw) => {
-  if (!raw || typeof raw !== "object") return null;
-  const state = {};
-  if (Number.isFinite(Number(raw.x))) state.x = clampNumber(raw.x, -5000, 5000, Number(raw.x));
-  if (Number.isFinite(Number(raw.y))) state.y = clampNumber(raw.y, -5000, 5000, Number(raw.y));
-  if (Number.isFinite(Number(raw.vx))) state.vx = clampNumber(raw.vx, -4000, 4000, Number(raw.vx));
-  if (Number.isFinite(Number(raw.vy))) state.vy = clampNumber(raw.vy, -4000, 4000, Number(raw.vy));
-  if (Number.isFinite(Number(raw.hp))) state.hp = clampNumber(raw.hp, -10, 250, Number(raw.hp));
-  if (Number.isFinite(Number(raw.stamina)))
-    state.stamina = clampNumber(raw.stamina, 0, 120, Number(raw.stamina));
-  if (raw.alive !== undefined) state.alive = Boolean(raw.alive);
-  if (raw.downed !== undefined) state.downed = Boolean(raw.downed);
-  if (raw.spectator !== undefined) state.spectator = Boolean(raw.spectator);
-  if (typeof raw.teamId === "number" && Number.isFinite(raw.teamId))
-    state.teamId = Math.round(raw.teamId);
-  if (typeof raw.teamColor === "string") state.teamColor = raw.teamColor.slice(0, 32);
-  if (typeof raw.weapon === "string") state.weapon = raw.weapon.slice(0, 24);
-  if (typeof raw.mode === "string") state.mode = raw.mode.slice(0, 16);
-  if (typeof raw.diff === "string") state.diff = raw.diff.slice(0, 16);
-  if (Number.isFinite(Number(raw.latency))) {
-    state.latency = clampNumber(raw.latency, 0, 10000, Number(raw.latency));
-  }
-  return Object.keys(state).length ? state : null;
-};
-
-const STATE_TTL_MS = 15_000;
-
-const getActiveStates = (party) => {
-  if (!party || !party.states) return [];
-  const now = Date.now();
-  const result = [];
-  for (const [id, snapshot] of party.states.entries()) {
-    if (!snapshot) {
-      party.states.delete(id);
-      continue;
-    }
-    if (now - (snapshot.updatedAt || 0) > STATE_TTL_MS) {
-      party.states.delete(id);
-      continue;
-    }
-    result.push(snapshot);
-  }
-  return result;
-};
-
-const sendPartyStates = (party, socket) => {
-  if (!party || !socket) return;
-  const payload = getActiveStates(party).filter((entry) => entry.id !== socket.id);
-  if (payload.length) socket.emit("state:bulk", payload);
-};
-
 const ensureDisplayName = (socket, maybeName) => {
   const sanitized = sanitizeName(maybeName);
   if (sanitized) {
@@ -164,10 +104,6 @@ const leaveParty = (socket, opts = {}) => {
     return;
   }
   party.members.delete(socket.id);
-  if (party.states) {
-    party.states.delete(socket.id);
-  }
-  socket.to(roomName(existingCode)).emit("state:remove", { id: socket.id });
   if (party.hostId === socket.id) {
     const nextMember = party.members.values().next().value;
     if (nextMember) {
@@ -186,7 +122,6 @@ const leaveParty = (socket, opts = {}) => {
 
 const joinParty = (party, socket, name) => {
   if (!party) return;
-  if (!party.states) party.states = new Map();
   if (party.members.size >= MAX_PARTY_SIZE) {
     socket.emit("party:error", { message: "Party is full." });
     return;
@@ -202,7 +137,6 @@ const joinParty = (party, socket, name) => {
   socket.data.partyCode = party.code;
   socket.join(roomName(party.code));
   socket.emit("party:joined", { code: party.code });
-  sendPartyStates(party, socket);
   broadcastParty(party);
 };
 
@@ -264,7 +198,6 @@ io.on("connection", (socket) => {
       code,
       hostId: socket.id,
       members: new Map(),
-      states: new Map(),
       createdAt: Date.now()
     };
     parties.set(code, party);
@@ -306,30 +239,7 @@ io.on("connection", (socket) => {
       return;
     }
     socket.join(roomName(party.code));
-    sendPartyStates(party, socket);
     broadcastParty(party);
-  });
-
-  socket.on("state:update", (payload = {}) => {
-    const party = getPartyForSocket(socket);
-    if (!party) return;
-    if (!party.states) party.states = new Map();
-    const sanitized = sanitizePlayerState(payload);
-    if (!sanitized) return;
-    sanitized.id = socket.id;
-    sanitized.name = socket.data.displayName;
-    sanitized.updatedAt = Date.now();
-    party.states.set(socket.id, sanitized);
-    socket.to(roomName(party.code)).emit("state:delta", sanitized);
-  });
-
-  socket.on("state:request", () => {
-    const party = getPartyForSocket(socket);
-    if (!party) {
-      socket.emit("state:bulk", []);
-      return;
-    }
-    sendPartyStates(party, socket);
   });
 
   socket.on("disconnect", () => {
