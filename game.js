@@ -167,13 +167,14 @@
       h ^= text.charCodeAt(i);
       h = Math.imul(h, 16777619);
     }
+    const normalize = 1 / 0x100000000; // 2^32
     return () => {
       h += h << 13;
       h ^= h >>> 7;
       h += h << 3;
       h ^= h >>> 17;
       h += h << 5;
-      return ((h >>> 0) & 0xffffffff) / 0xffffffff;
+      return (h >>> 0) * normalize;
     };
   }
 
