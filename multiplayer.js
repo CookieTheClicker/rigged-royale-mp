@@ -150,6 +150,7 @@
         <input id="mpJoinCode" type="text" maxlength="6" placeholder="Code">
         <button id="mpJoin">Join</button>
         <button id="mpLeave">Leave</button>
+        <button id="mpCopy" title="Copy party code">Copy</button>
       </div>
       <label id="mpReadyWrap" class="mp-inline mp-subtle" style="align-items:center;">
         <input type="checkbox" id="mpReady" style="width:auto;">
@@ -179,6 +180,7 @@
     joinCode: panel.querySelector("#mpJoinCode"),
     joinBtn: panel.querySelector("#mpJoin"),
     leaveBtn: panel.querySelector("#mpLeave"),
+    copyBtn: panel.querySelector("#mpCopy"),
     readyWrap: panel.querySelector("#mpReadyWrap"),
     readyToggle: panel.querySelector("#mpReady"),
     members: panel.querySelector("#mpPartyMembers"),
@@ -202,7 +204,217 @@
     pingTimer: null,
     stateSynced: false,
     lastLatency: null,
+    matchSeed: null,
+    activeMatchCounter: null,
+    pendingMatchMinCounter: null,
   };
+
+  const matchSeedRequests = new Map();
+  let matchSeedPromise = null;
+  const matchReadyListeners = new Set();
+
+  const makeRequestId = () => Math.random().toString(36).slice(2, 10);
+  const toCounter = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  function sanitizeMatchSeed(payload) {
+    if (!payload || typeof payload.seed !== "string") return null;
+    const seed = payload.seed.slice(0, 80);
+    const counter = Number.isFinite(Number(payload.counter)) ? Number(payload.counter) : 0;
+    const issuedAt = Number.isFinite(Number(payload.issuedAt)) ? Number(payload.issuedAt) : Date.now();
+    const by = typeof payload.by === "string" ? payload.by : null;
+    return { seed, counter, issuedAt, by };
+  }
+
+  function resolveMatchSeedRequests(result, requestId) {
+    if (!matchSeedRequests.size) {
+      matchSeedPromise = null;
+      return;
+    }
+    const resultCounter =
+      result && Number.isFinite(Number(result.counter))
+        ? Number(result.counter)
+        : null;
+
+    const canResolve = (entry) => {
+      if (!entry) return false;
+      const minCounter =
+        entry.minCounter !== null && entry.minCounter !== undefined
+          ? Number(entry.minCounter)
+          : null;
+      if (minCounter === null || Number.isNaN(minCounter)) {
+        return true;
+      }
+      if (resultCounter === null) return false;
+      return resultCounter >= minCounter;
+    };
+
+    const resolveEntry = (id, entry) => {
+      matchSeedRequests.delete(id);
+      clearTimeout(entry.timeout);
+      entry.resolve(result);
+    };
+
+    let resolvedAny = false;
+    if (requestId && matchSeedRequests.has(requestId)) {
+      const entry = matchSeedRequests.get(requestId);
+      if (canResolve(entry)) {
+        resolveEntry(requestId, entry);
+        resolvedAny = true;
+      }
+    }
+
+    if (matchSeedRequests.size) {
+      for (const [id, entry] of Array.from(matchSeedRequests.entries())) {
+        if (id === requestId) continue;
+        if (!canResolve(entry)) continue;
+        resolveEntry(id, entry);
+        resolvedAny = true;
+      }
+    }
+
+    if (resolvedAny || !matchSeedRequests.size) {
+      matchSeedPromise = null;
+    }
+  }
+
+  function notifyMatchReady(info) {
+    if (!matchReadyListeners.size) return;
+    const snapshot = info ? { ...info } : null;
+    for (const listener of Array.from(matchReadyListeners)) {
+      try {
+        listener(snapshot);
+      } catch (err) {
+        console.warn("matchReady listener failed", err);
+      }
+    }
+  }
+
+  function resetMatchSeed() {
+    state.matchSeed = null;
+    state.activeMatchCounter = null;
+    state.pendingMatchMinCounter = null;
+    if (matchSeedPromise) {
+      matchSeedPromise = null;
+    }
+    if (!matchSeedRequests.size) return;
+    for (const [id, entry] of matchSeedRequests.entries()) {
+      matchSeedRequests.delete(id);
+      clearTimeout(entry.timeout);
+      entry.resolve(null);
+    }
+  }
+
+  function ensureMatchSeed(options = {}) {
+    if (!state.socket || !state.socket.connected || !state.party || !state.party.code) {
+      return Promise.resolve(null);
+    }
+    const fresh = Boolean(options && options.fresh);
+    const isHost = state.party && state.party.hostId === state.selfId;
+    const currentSeed = state.matchSeed;
+    const currentCounter = currentSeed ? toCounter(currentSeed.counter) : null;
+    const activeCounter = toCounter(state.activeMatchCounter);
+
+    if (!fresh) {
+      if (currentSeed) {
+        return Promise.resolve(currentSeed);
+      }
+    } else if (currentSeed && activeCounter !== currentCounter) {
+      return Promise.resolve(currentSeed);
+    }
+
+    if (matchSeedPromise) return matchSeedPromise;
+
+    const requestId = makeRequestId();
+    const awaitingNewSeed = fresh && currentCounter !== null && activeCounter === currentCounter;
+    const minCounter = awaitingNewSeed && currentCounter !== null ? currentCounter + 1 : null;
+    if (awaitingNewSeed) {
+      state.matchSeed = null;
+      state.pendingMatchMinCounter = minCounter;
+    } else if (fresh) {
+      state.pendingMatchMinCounter = null;
+    }
+    matchSeedPromise = new Promise((resolve) => {
+      const timeoutMs = fresh ? 6000 : 2500;
+      const timeout = setTimeout(() => {
+        if (matchSeedRequests.has(requestId)) {
+          matchSeedRequests.delete(requestId);
+        }
+        matchSeedPromise = null;
+        resolve(state.matchSeed || null);
+      }, timeoutMs);
+      matchSeedRequests.set(requestId, {
+        timeout,
+        minCounter,
+        resolve: (value) => {
+          if (matchSeedRequests.has(requestId)) {
+            matchSeedRequests.delete(requestId);
+          }
+          clearTimeout(timeout);
+          matchSeedPromise = null;
+          resolve(value);
+        },
+      });
+      if (fresh) {
+        setPartyMessage(
+          isHost ? "Starting new match..." : "Waiting for host to start the match..."
+        );
+        state.socket.emit("match:request", { requestId, afterCounter: minCounter });
+      } else {
+        state.socket.emit("match:get");
+      }
+    });
+    return matchSeedPromise;
+  }
+
+  const mpBridge = {
+    getPartyContext: () => {
+      if (!state.party || !state.party.code) return null;
+      const members = Array.isArray(state.party.members)
+        ? state.party.members.map((member) => ({
+            id: member && member.id ? member.id : null,
+            name: member && member.name ? String(member.name) : "",
+            ready: Boolean(member && member.ready),
+          }))
+        : [];
+      return {
+        code: state.party.code,
+        hostId: state.party.hostId || null,
+        createdAt: state.party.createdAt || null,
+        members,
+        maxSize: Number.isFinite(Number(state.party.maxSize))
+          ? Number(state.party.maxSize)
+          : null,
+      };
+    },
+    getSelfId: () => state.selfId,
+    getLatestMatchSeed: () => (state.matchSeed ? { ...state.matchSeed } : null),
+    ensureMatchSeed: (opts = {}) => ensureMatchSeed(opts),
+    notifyAwaitingHost: () => setPartyMessage("Waiting for host to start the match..."),
+    markSeedActive: (counter) => {
+      const num = Number(counter);
+      state.activeMatchCounter = Number.isFinite(num) ? num : null;
+      state.pendingMatchMinCounter = null;
+    },
+    onMatchReady: (handler) => {
+      if (typeof handler !== "function") {
+        return () => {};
+      }
+      matchReadyListeners.add(handler);
+      return () => {
+        matchReadyListeners.delete(handler);
+      };
+    },
+  };
+
+  window.RiggedRoyale = Object.assign(window.RiggedRoyale || {}, { mp: mpBridge });
+  if (typeof window.dispatchEvent === "function") {
+    try {
+      window.dispatchEvent(new CustomEvent("rr:mp:ready"));
+    } catch (_) {}
+  }
 
   const storedName = localStorage.getItem("rrDisplayName");
   if (storedName) {
@@ -257,6 +469,30 @@
     state.socket.emit("party:leave");
   });
 
+  elements.copyBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!state.party || !state.party.code) {
+      setPartyMessage("No party code to copy", "error");
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(state.party.code);
+      } else {
+        const temp = document.createElement("input");
+        temp.value = state.party.code;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        document.body.removeChild(temp);
+      }
+      setPartyMessage("Party code copied");
+    } catch (err) {
+      console.warn("Failed to copy party code", err);
+      setPartyMessage("Unable to copy code", "error");
+    }
+  });
+
   elements.readyToggle.addEventListener("change", () => {
     if (!checkSocket()) return;
     state.socket.emit("party:ready", {
@@ -302,6 +538,7 @@
     state.connected = false;
     state.stateSynced = false;
     state.lastLatency = null;
+    resetMatchSeed();
     updateStatus();
   }
 
@@ -420,6 +657,7 @@
     elements.joinCode.disabled = !state.connected || hasParty;
     elements.leaveBtn.disabled = !state.connected || !hasParty;
     elements.readyToggle.disabled = !state.connected || !hasParty;
+    elements.copyBtn.disabled = !state.connected || !hasParty;
     elements.readyWrap.style.display = hasParty ? "flex" : "none";
 
     elements.members.innerHTML = "";
@@ -506,6 +744,7 @@
       state.party = null;
       state.stateSynced = false;
       state.lastLatency = null;
+      resetMatchSeed();
       updateStatus();
       updatePartyUI();
       logLine("Disconnected from server.");
@@ -560,6 +799,11 @@
       } else if (!current) {
         state.stateSynced = false;
       }
+      if (!current) {
+        resetMatchSeed();
+      } else if (!previous && state.socket && state.socket.connected) {
+        state.socket.emit("match:get");
+      }
     });
 
     socket.on("party:error", ({ message }) => {
@@ -572,6 +816,7 @@
       logLine(`Party created (${code})`);
       state.stateSynced = false;
       socket.emit("state:request");
+      resetMatchSeed();
     });
 
     socket.on("party:joined", ({ code }) => {
@@ -579,6 +824,55 @@
       logLine(`Joined party ${code}`);
       state.stateSynced = false;
       socket.emit("state:request");
+      resetMatchSeed();
+    });
+
+    socket.on("match:seed", (payload = {}) => {
+      const sanitized = sanitizeMatchSeed(payload);
+      if (!sanitized) return;
+      const nextCounter = toCounter(sanitized.counter);
+      const requirement = toCounter(state.pendingMatchMinCounter);
+      if (requirement !== null && (nextCounter === null || nextCounter < requirement)) {
+        return;
+      }
+      const previousCounter = toCounter(state.matchSeed && state.matchSeed.counter);
+      state.matchSeed = sanitized;
+      if (nextCounter !== null && nextCounter !== previousCounter) {
+        state.activeMatchCounter = null;
+        if (payload && payload.by && payload.by !== state.selfId) {
+          setPartyMessage("Match ready!");
+        }
+      }
+      if (requirement !== null && nextCounter !== null && nextCounter >= requirement) {
+        state.pendingMatchMinCounter = null;
+      }
+      resolveMatchSeedRequests(sanitized, payload.requestId);
+      if (nextCounter !== null && nextCounter !== previousCounter) {
+        notifyMatchReady(sanitized);
+      }
+    });
+
+    socket.on("match:seed:ack", (payload = {}) => {
+      const sanitized = sanitizeMatchSeed(payload);
+      if (!sanitized) return;
+      const nextCounter = toCounter(sanitized.counter);
+      const requirement = toCounter(state.pendingMatchMinCounter);
+      if (requirement !== null && (nextCounter === null || nextCounter < requirement)) {
+        return;
+      }
+      const previousCounter = toCounter(state.matchSeed && state.matchSeed.counter);
+      state.matchSeed = sanitized;
+      if (nextCounter !== null && nextCounter !== previousCounter) {
+        state.activeMatchCounter = null;
+        setPartyMessage("Match ready!");
+      }
+      if (requirement !== null && nextCounter !== null && nextCounter >= requirement) {
+        state.pendingMatchMinCounter = null;
+      }
+      resolveMatchSeedRequests(sanitized, payload.requestId);
+      if (nextCounter !== null && nextCounter !== previousCounter) {
+        notifyMatchReady(sanitized);
+      }
     });
 
     socket.on("identity:ack", ({ name }) => {
@@ -621,6 +915,7 @@
       state.stateSynced = false;
       socket.emit("party:sync");
       socket.emit("state:request");
+      socket.emit("match:get");
       if (state.name) socket.emit("identity:set", { name: state.name });
       updateStatus();
     });
