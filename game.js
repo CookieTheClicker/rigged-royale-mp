@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   'use strict';
 
   // --- Config ---
@@ -245,7 +245,7 @@
     graceTimer: 0,
     remotePlayers: new Map(),
   };
-﻿  const REMOTE_TIMEOUT_MS = 7000;
+  const REMOTE_TIMEOUT_MS = 7000;
   const REMOTE_LERP_SPEED = 10;
   let localNetworkId = null;
 
@@ -1588,7 +1588,7 @@
       p ? `HP: ${Math.max(0, p.hp|0)}` : 'HP: 0',
       p ? `Gun: ${W.name} [${p.mag}/${W.mag}] Ammo: ${p.ammo[p.weapon]||0}` : '',
       zoneTxt,
-    ].filter(Boolean).join(' • ');
+    ].filter(Boolean).join(' &bull; ');
 
     // Minimap (top-right)
     const mmW = 200, mmH = Math.round(mmW * (CONFIG.mapH/CONFIG.mapW));
@@ -1630,12 +1630,3 @@
 }
 
 })();
-
-
-
-
-
-
-
-
-
