@@ -193,6 +193,7 @@
   const state = {
     socket: null,
     connected: false,
+    connecting: false,
     selfId: null,
     online: 0,
     party: null,
@@ -300,6 +301,7 @@
     state.selfId = null;
     state.party = null;
     state.connected = false;
+    state.connecting = false;
     state.stateSynced = false;
     state.lastLatency = null;
     updateStatus();
@@ -340,8 +342,19 @@
 
   function updateStatus() {
     const parts = [];
-    parts.push(state.connected ? "connected" : "offline");
-    parts.push(`${Math.max(0, state.online)} online`);
+    if (state.connected) {
+      parts.push("connected");
+    } else if (state.connecting) {
+      parts.push("connecting");
+    } else {
+      parts.push("offline");
+    }
+    if (state.connected || state.online) {
+      parts.push(`${Math.max(0, state.online)} online`);
+    }
+    if (state.connected && typeof state.lastLatency === "number") {
+      parts.push(`${Math.round(state.lastLatency)} ms`);
+    }
     elements.status.textContent = parts.join(" | ");
   }
 
@@ -472,8 +485,12 @@
       ? io(SERVER_URL, { transports: ["websocket", "polling"] })
       : io({ transports: ["websocket", "polling"] });
     state.socket = socket;
+    state.connecting = true;
+    state.connected = false;
+    updateStatus();
 
     socket.on("connect", () => {
+      state.connecting = false;
       state.connected = true;
       state.selfId = socket.id;
       if (netBridge && typeof netBridge.setLocalId === "function") {
@@ -501,6 +518,7 @@
       if (netBridge && typeof netBridge.setLocalId === "function") {
         netBridge.setLocalId(null);
       }
+      state.connecting = false;
       state.connected = false;
       state.selfId = null;
       state.party = null;
@@ -515,12 +533,29 @@
     });
 
     socket.on("connect_error", (err) => {
+      state.connecting = false;
+      state.connected = false;
+      updateStatus();
       setPartyMessage(
         `Connection error: ${
           err && err.message ? err.message : "unknown"
         }`,
         "error"
       );
+    });
+
+    socket.io.on("reconnect_attempt", () => {
+      state.connecting = true;
+      updateStatus();
+      setPartyMessage("Reconnecting...");
+    });
+
+    socket.io.on("reconnect_error", (err) => {
+      state.connecting = true;
+      updateStatus();
+      const suffix =
+        err && err.message ? `: ${err.message}` : "";
+      setPartyMessage(`Reconnect failed${suffix}`, "error");
     });
 
     socket.on("presence", ({ online }) => {
@@ -611,6 +646,7 @@
     });
     socket.on("reconnect", () => {
       logLine("Reconnected.");
+      state.connecting = false;
       state.connected = true;
       state.selfId = socket.id;
       if (netBridge && typeof netBridge.setLocalId === "function") {
