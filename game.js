@@ -104,6 +104,9 @@
   const randi = (a, b) => Math.floor(rand(a, b));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+  const RIGHT_ANGLE = Math.PI / 2;
+  const randomRightAngle = () => RIGHT_ANGLE * randi(0, 4);
+
 
 
   const dist2 = (x1, y1, x2, y2) => {
@@ -596,7 +599,7 @@
       const r = randi(26, 42);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.bushes.push({ x, y, r, rot: 0 });
+      world.bushes.push({ x, y, r, rot: randomRightAngle() });
     }
     // Trees (decor)
     world.trees = [];
@@ -604,7 +607,7 @@
       const r = randi(32, 54);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.trees.push({ x, y, r, rot: 0, hitboxScale: 0.88 });
+      world.trees.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.88 });
     }
     // Stones (decor)
     world.stones = [];
@@ -612,7 +615,7 @@
       const r = randi(22, 34);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.stones.push({ x, y, r, rot: 0, hitboxScale: 0.72 });
+      world.stones.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.72 });
     }
     // Crates now ride on weapon pickups for visuals
     world.crates = [];
@@ -621,7 +624,7 @@
       const r = randi(35, 60);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.puddles.push({ x, y, r, rot: 0 });
+      world.puddles.push({ x, y, r, rot: randomRightAngle() });
     }
 
     // Pickups
@@ -961,19 +964,28 @@
     if (!matchSeed || !matchSeed.seed || !partyCtx || !partyCtx.code) return null;
     const baseKey = `${partyCtx.code}:${matchSeed.seed}:${matchSeed.counter || 0}`;
     const baseRng = makeSeededRng(baseKey);
-    const centerX = clamp(Math.round(200 + baseRng() * (CONFIG.mapW - 400)), 200, CONFIG.mapW - 200);
-    const centerY = clamp(Math.round(200 + baseRng() * (CONFIG.mapH - 400)), 200, CONFIG.mapH - 200);
-    if (!selfId) {
-      return { x: centerX, y: centerY };
+    const centerX = clamp(Math.round(220 + baseRng() * (CONFIG.mapW - 440)), 200, CONFIG.mapW - 200);
+    const centerY = clamp(Math.round(220 + baseRng() * (CONFIG.mapH - 440)), 200, CONFIG.mapH - 200);
+    const members = Array.isArray(partyCtx.members) ? partyCtx.members : [];
+    const normalizedSelf = selfId != null ? String(selfId) : null;
+    let memberIndex = 0;
+    if (normalizedSelf) {
+      const idx = members.findIndex((m) => m && String(m.id) === normalizedSelf);
+      memberIndex = idx >= 0 ? idx : members.length;
     }
-    const memberRng = makeSeededRng(`${baseKey}:${selfId}`);
-    const angle = memberRng() * Math.PI * 2;
-    const radius = 50 + memberRng() * 90;
-    const spawnX = clamp(centerX + Math.cos(angle) * radius, 120, CONFIG.mapW - 120);
-    const spawnY = clamp(centerY + Math.sin(angle) * radius, 120, CONFIG.mapH - 120);
+    const spreadBase = 140;
+    const spreadRange = 160;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const memberSeed = `${baseKey}:${normalizedSelf || memberIndex}`;
+    const memberRng = makeSeededRng(memberSeed);
+    const spiralAngle = (baseRng() * Math.PI * 2) + memberIndex * golden;
+    const jitter = memberRng ? (memberRng() - 0.5) * 0.6 : 0;
+    const angle = spiralAngle + jitter;
+    const radius = spreadBase + Math.min(memberIndex, 6) * 26 + (memberRng ? memberRng() * spreadRange : spreadRange * 0.5);
+    const spawnX = clamp(centerX + Math.cos(angle) * radius, 140, CONFIG.mapW - 140);
+    const spawnY = clamp(centerY + Math.sin(angle) * radius, 140, CONFIG.mapH - 140);
     return { x: spawnX, y: spawnY };
   }
-
   async function startGame() {
     let spawnOverride = null;
     let seededRng = null;
