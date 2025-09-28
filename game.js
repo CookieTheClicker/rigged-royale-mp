@@ -103,6 +103,11 @@
   const rand = (a, b) => a + randomSource() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  const RIGHT_ANGLE = Math.PI / 2;
+
+  const randomRightAngle = () => RIGHT_ANGLE * randi(0, 4);
+
   const dist2 = (x1, y1, x2, y2) => {
     const dx = x1 - x2, dy = y1 - y2; return dx * dx + dy * dy;
   };
@@ -124,7 +129,7 @@
       h += h << 3;
       h ^= h >>> 17;
       h += h << 5;
-      return ((h >>> 0) & 0xffffffff) / 0xffffffff;
+      return ((h >>> 0) & 0xffffffff) / 0x100000000;
     };
   }
 
@@ -538,7 +543,9 @@
 
   function makeBot(x, y, id) {
     const pool = ['pistol', 'rifle', 'shotgun'];
-    const w = pool[randi(0, pool.length)];
+    const roll = pool[randi(0, pool.length)];
+    const weaponKey = WEAPONS[roll] ? roll : 'rifle';
+    const weaponDef = WEAPONS[weaponKey];
     return {
       type: 'bot',
       id,
@@ -546,10 +553,10 @@
       vx: 0, vy: 0,
       speed: CONFIG.botSpeed * world.diff.speedMult * rand(0.9, 1.05),
       hp: 100 * (world.diff.botHpMult || 1), alive: true, downed: false, bleed: 0, reviveProgress: 0,
-      weapon: w,
-      inventory: [w], slot: 0,
+      weapon: weaponKey,
+      inventory: [weaponKey], slot: 0,
       ammo: { pistol: 60, rifle: 90, shotgun: 24 },
-      mag: WEAPONS[w].mag,
+      mag: weaponDef ? weaponDef.mag : 12,
       shootCd: 0, reloadT: 0,
       target: null,
       aggro: 0,
@@ -630,12 +637,18 @@
     }
   }
 
-  // --- Prop Helpers ---
-  function circleContains(obj, x, y, pad = 0) {
-    if (!obj) return false;
-    const r = (obj.r || 0) + pad;
-    if (r <= 0) return false;
-    return dist2(obj.x, obj.y, x, y) <= r * r;
+  // --- Prop Helpers ---
+  function getHitboxRadius(obj, baseScale = 1, useHitboxScale = true) {
+    if (!obj) return 0;
+    const base = obj.r || 0;
+    const applied = useHitboxScale && obj.hitboxScale != null ? obj.hitboxScale : 1;
+    return base * applied * baseScale;
+  }
+  function circleContains(obj, x, y, pad = 0) {
+    if (!obj) return false;
+    const r = getHitboxRadius(obj) + pad;
+    if (r <= 0) return false;
+    return dist2(obj.x, obj.y, x, y) <= r * r;
   }
   function findPropAt(list, x, y, pad = 0) {
     if (!list) return null;
