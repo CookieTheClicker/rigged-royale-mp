@@ -598,7 +598,7 @@
       const r = randi(26, 42);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.bushes.push({ x, y, r, rot: rand(0, Math.PI*2) });
+      world.bushes.push({ x, y, r, rot: randomRightAngle() });
     }
     // Trees (decor)
     world.trees = [];
@@ -606,7 +606,7 @@
       const r = randi(32, 54);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.trees.push({ x, y, r, rot: rand(0, Math.PI*2) });
+      world.trees.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.88 });
     }
     // Stones (decor)
     world.stones = [];
@@ -614,7 +614,7 @@
       const r = randi(22, 34);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.stones.push({ x, y, r, rot: rand(0, Math.PI*2) });
+      world.stones.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.72 });
     }
     // Crates now ride on weapon pickups for visuals
     world.crates = [];
@@ -623,7 +623,7 @@
       const r = randi(35, 60);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.puddles.push({ x, y, r, rot: rand(0, Math.PI*2) });
+      world.puddles.push({ x, y, r, rot: randomRightAngle() });
     }
 
     // Pickups
@@ -675,7 +675,7 @@
     if (!ent) return [0, 0];
     let ax = 0, ay = 0;
     const rectAvoid = (ob) => {
-      const pad = ent.r + 60;
+      const pad = ent.r + 48;
       const cx = clamp(ent.x, ob.x - pad, ob.x + ob.w + pad);
       const cy = clamp(ent.y, ob.y - pad, ob.y + ob.h + pad);
       let dx = ent.x - cx;
@@ -693,8 +693,8 @@
       }
     };
     const circleAvoid = (obj) => {
-      const or = (obj.r || 0);
-      const radius = or + ent.r + 45;
+      const or = getHitboxRadius(obj);
+      const radius = or + ent.r + 28;
       if (radius <= 0) return;
       const dx = ent.x - obj.x;
       const dy = ent.y - obj.y;
@@ -706,10 +706,70 @@
         ay += (dy / d) * strength;
       }
     };
-    for (const ob of world.obstacles) rectAvoid(ob);
-    for (const st of world.stones) circleAvoid(st);
-    for (const tr of world.trees) circleAvoid(tr);
+    if (world.obstacles) {
+      for (const ob of world.obstacles) rectAvoid(ob);
+    }
+    if (ASSETS.stone.length && world.stones) {
+      for (const st of world.stones) circleAvoid(st);
+    }
+    if (ASSETS.tree.length && world.trees) {
+      for (const tr of world.trees) circleAvoid(tr);
+    }
     return [ax, ay];
+  }
+
+  const PATH_PROBE_STEP = 28;
+  const PATH_PROBE_DISTANCE = 200;
+  function isPositionBlocked(x, y, radius) {
+    const probe = { x, y, r: radius };
+    if (world.obstacles) {
+      for (const ob of world.obstacles) {
+        if (circleRectOverlap(probe, ob)) return true;
+      }
+    }
+    if (ASSETS.stone.length && world.stones) {
+      for (const st of world.stones) {
+        if (circlesOverlap(probe, st)) return true;
+      }
+    }
+    if (ASSETS.tree.length && world.trees) {
+      for (const tr of world.trees) {
+        if (circlesOverlap(probe, tr)) return true;
+      }
+    }
+    return false;
+  }
+  function directionIsClear(ent, dirX, dirY, distance = PATH_PROBE_DISTANCE) {
+    const mag = Math.hypot(dirX, dirY);
+    if (!mag) return true;
+    const nx = dirX / mag;
+    const ny = dirY / mag;
+    const steps = Math.max(2, Math.ceil(distance / PATH_PROBE_STEP));
+    const stepDist = distance / steps;
+    let px = ent.x;
+    let py = ent.y;
+    for (let i = 1; i <= steps; i++) {
+      px += nx * stepDist;
+      py += ny * stepDist;
+      if (px < ent.r || py < ent.r || px > CONFIG.mapW - ent.r || py > CONFIG.mapH - ent.r) return false;
+      if (isPositionBlocked(px, py, ent.r)) return false;
+    }
+    return true;
+  }
+  function findNavigableDirection(ent, desiredX, desiredY) {
+    const len = Math.hypot(desiredX, desiredY);
+    if (!len) return [0, 0];
+    const baseAngle = Math.atan2(desiredY, desiredX);
+    const offsets = [0, 0.35, -0.35, 0.7, -0.7, Math.PI / 2, -Math.PI / 2, Math.PI];
+    for (const offset of offsets) {
+      const angle = baseAngle + offset;
+      const vx = Math.cos(angle);
+      const vy = Math.sin(angle);
+      if (directionIsClear(ent, vx, vy)) {
+        return [vx, vy];
+      }
+    }
+    return [desiredX / len, desiredY / len];
   }
 
   const PUDDLE_SLOW_MULT = 0.55;
@@ -768,7 +828,7 @@
     const resolveCircleSolids = (solids, radiusScale = 1) => {
       if (!solids) return;
       for (const solid of solids) {
-        const sr = (solid.r || 0) * radiusScale;
+        const sr = getHitboxRadius(solid, radiusScale);
         const total = ent.r + sr;
         if (total <= 0) continue;
         const dx = nx - solid.x;
@@ -790,8 +850,8 @@
         }
       }
     };
-    resolveCircleSolids(world.stones, 0.95);
-    resolveCircleSolids(world.trees, 1.05);
+    if (ASSETS.stone.length) resolveCircleSolids(world.stones, 0.95);
+    if (ASSETS.tree.length) resolveCircleSolids(world.trees, 1.05);
     ent.x = nx; ent.y = ny;
     updatePropState(ent);
   }
@@ -1149,6 +1209,11 @@
       const radius = dist < 300 ? 120 : 220;
       tx = best.x + Math.cos(desired) * radius;
       ty = best.y + Math.sin(desired) * radius;
+      if (!lineOfSight(bot.x, bot.y, best.x, best.y)) {
+        const advance = findNavigableDirection(bot, best.x - bot.x, best.y - bot.y);
+        tx = bot.x + advance[0] * 220;
+        ty = bot.y + advance[1] * 220;
+      }
       const jitter = Math.random()*0.12;
       if (Math.random() < world.diff.aimProb) {
         doShoot(bot,
@@ -1173,13 +1238,16 @@
     }
 
     let [dx, dy] = norm(tx - bot.x, ty - bot.y);
+    const navDir = findNavigableDirection(bot, dx, dy);
+    dx = navDir[0]; dy = navDir[1];
     const [ax, ay] = computeAvoidance(bot);
     if (ax || ay) {
-      const mixed = norm(dx + ax * 1.8, dy + ay * 1.8);
+      const mixed = norm(dx + ax * 1.6, dy + ay * 1.6);
       dx = mixed[0]; dy = mixed[1];
     }
-    bot.vx = lerp(bot.vx, dx * bot.speed * terrainMul, 0.12);
-    bot.vy = lerp(bot.vy, dy * bot.speed * terrainMul, 0.12);
+    bot.navDir = { x: dx, y: dy };
+    bot.vx = lerp(bot.vx, dx * bot.speed * terrainMul, 0.14);
+    bot.vy = lerp(bot.vy, dy * bot.speed * terrainMul, 0.14);
   }
 
   function lineOfSight(x1,y1,x2,y2) {
@@ -1190,11 +1258,15 @@
       for (const ob of world.obstacles) {
         if (x>=ob.x && x<=ob.x+ob.w && y>=ob.y && y<=ob.y+ob.h) return false;
       }
-      for (const st of world.stones) {
-        if (circleContains(st, x, y)) return false;
+      if (ASSETS.stone.length) {
+        for (const st of world.stones) {
+          if (circleContains(st, x, y)) return false;
+        }
       }
-      for (const tr of world.trees) {
-        if (circleContains(tr, x, y)) return false;
+      if (ASSETS.tree.length) {
+        for (const tr of world.trees) {
+          if (circleContains(tr, x, y)) return false;
+        }
       }
     }
     return true;
@@ -1555,8 +1627,6 @@
         const imgs = ASSETS.bush || [];
         const sprite = imgs.length ? imgs[(Math.abs((bsh.x|0)+(bsh.y|0)) % imgs.length)] : null;
         if (!(sprite && sprite.complete && sprite.naturalWidth > 0)) continue;
-        ctx.fillStyle = 'rgba(0,0,0,0.22)';
-        ctx.beginPath(); ctx.ellipse(bsh.x, bsh.y + bsh.r*0.28, bsh.r*0.9, bsh.r*0.5, 0, 0, Math.PI*2); ctx.fill();
         const s = bsh.r*2; ctx.save(); ctx.translate(bsh.x, bsh.y); ctx.rotate(bsh.rot||0);
         ctx.drawImage(sprite, -s/2, -s/2, s, s); ctx.restore();
       }
@@ -1568,8 +1638,6 @@
         const imgs = ASSETS.tree || [];
         const sprite = imgs.length ? imgs[(Math.abs((tr.x|0)-(tr.y|0)) % imgs.length)] : null;
         if (!(sprite && sprite.complete && sprite.naturalWidth > 0)) continue;
-        ctx.fillStyle = 'rgba(0,0,0,0.24)';
-        ctx.beginPath(); ctx.ellipse(tr.x, tr.y + tr.r*0.32, tr.r*0.95, tr.r*0.55, 0, 0, Math.PI*2); ctx.fill();
         const s = tr.r*2.2; ctx.save(); ctx.translate(tr.x, tr.y); ctx.rotate(tr.rot||0);
         ctx.drawImage(sprite, -s/2, -s/2, s, s); ctx.restore();
       }
@@ -1581,8 +1649,6 @@
         const imgs = ASSETS.stone || [];
         const sprite = imgs.length ? imgs[(Math.abs((st.x|0)*3+(st.y|0)) % imgs.length)] : null;
         if (!(sprite && sprite.complete && sprite.naturalWidth > 0)) continue;
-        ctx.fillStyle = 'rgba(0,0,0,0.18)';
-        ctx.beginPath(); ctx.ellipse(st.x, st.y + st.r*0.2, st.r*0.8, st.r*0.38, 0, 0, Math.PI*2); ctx.fill();
         const s = st.r*2; ctx.save(); ctx.translate(st.x, st.y); ctx.rotate(st.rot||0);
         ctx.drawImage(sprite, -s/2, -s/2, s, s); ctx.restore();
       }
@@ -1601,10 +1667,6 @@
         ctx.save();
         ctx.translate(pk.x, pk.y);
         ctx.rotate(pk.spin * 0.15);
-        ctx.fillStyle = 'rgba(0,0,0,0.22)';
-        ctx.beginPath();
-        ctx.ellipse(0, pk.r * 0.8, size * 0.55, size * 0.28, 0, 0, Math.PI*2);
-        ctx.fill();
         ctx.drawImage(sprite, -size/2, -size/2, size, size);
         ctx.globalAlpha = 0.4;
         ctx.fillStyle = tint;
