@@ -1,4 +1,4 @@
-﻿// server.js - single app: serves static frontend + Socket.IO (ESM)
+// server.js - single app: serves static frontend + Socket.IO (ESM)
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,85 +50,15 @@ const sanitizePlayerState = (raw) => {
   if (Number.isFinite(Number(raw.vx))) state.vx = clampNumber(raw.vx, -4000, 4000, Number(raw.vx));
   if (Number.isFinite(Number(raw.vy))) state.vy = clampNumber(raw.vy, -4000, 4000, Number(raw.vy));
   if (Number.isFinite(Number(raw.hp))) state.hp = clampNumber(raw.hp, -10, 250, Number(raw.hp));
-  if (Number.isFinite(Number(raw.stamina)))
+  if (Number.isFinite(Number(raw.stamina))) {
     state.stamina = clampNumber(raw.stamina, 0, 120, Number(raw.stamina));
+  }
   if (raw.alive !== undefined) state.alive = Boolean(raw.alive);
   if (raw.downed !== undefined) state.downed = Boolean(raw.downed);
   if (raw.spectator !== undefined) state.spectator = Boolean(raw.spectator);
-  if (typeof raw.teamId === "number" && Number.isFinite(raw.teamId))
+  if (typeof raw.teamId === "number" && Number.isFinite(raw.teamId)) {
     state.teamId = Math.round(raw.teamId);
-  if (typeof raw.teamColor === "string") state.teamColor = raw.teamColor.slice(0, 32);
-  if (typeof raw.weapon === "string") state.weapon = raw.weapon.slice(0, 24);
-  if (typeof raw.mode === "string") state.mode = raw.mode.slice(0, 16);
-  if (typeof raw.diff === "string") state.diff = raw.diff.slice(0, 16);
-  if (Number.isFinite(Number(raw.latency))) {
-    state.latency = clampNumber(raw.latency, 0, 10000, Number(raw.latency));
   }
-  return Object.keys(state).length ? state : null;
-};
-
-const STATE_TTL_MS = 15_000;
-
-const getActiveStates = (party) => {
-  if (!party || !party.states) return [];
-  const now = Date.now();
-  const result = [];
-  for (const [id, snapshot] of party.states.entries()) {
-    if (!snapshot) {
-      party.states.delete(id);
-      continue;
-    }
-    if (now - (snapshot.updatedAt || 0) > STATE_TTL_MS) {
-      party.states.delete(id);
-      continue;
-    }
-    result.push(snapshot);
-  }
-  return result;
-};
-
-const sendPartyStates = (party, socket) => {
-  if (!party || !socket) return;
-  const payload = getActiveStates(party).filter((entry) => entry.id !== socket.id);
-  if (payload.length) socket.emit("state:bulk", payload);
-};
-
-const ensureDisplayName = (socket, maybeName) => {
-  const sanitized = sanitizeName(maybeName);
-  if (sanitized) {
-    socket.data.displayName = sanitized;
-    return sanitized;
-  }
-  if (typeof socket.data.displayName === "string" && socket.data.displayName.trim()) {
-    return socket.data.displayName;
-  }
-  const fallback = `Player-${socket.id.slice(0, 5)}`;
-  socket.data.displayName = fallback;
-  return fallback;
-};
-
-const clampNumber = (value, min, max, fallback = 0) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return fallback;
-  let result = num;
-  if (typeof min === "number") result = Math.max(min, result);
-  if (typeof max === "number") result = Math.min(max, result);
-  return result;
-};
-
-const sanitizePlayerState = (raw) => {
-  if (!raw || typeof raw !== "object") return null;
-  const state = {};
-  if (Number.isFinite(Number(raw.x))) state.x = clampNumber(raw.x, -5000, 5000, Number(raw.x));
-  if (Number.isFinite(Number(raw.y))) state.y = clampNumber(raw.y, -5000, 5000, Number(raw.y));
-  if (Number.isFinite(Number(raw.vx))) state.vx = clampNumber(raw.vx, -4000, 4000, Number(raw.vx));
-  if (Number.isFinite(Number(raw.vy))) state.vy = clampNumber(raw.vy, -4000, 4000, Number(raw.vy));
-  if (Number.isFinite(Number(raw.hp))) state.hp = clampNumber(raw.hp, -10, 250, Number(raw.hp));
-  if (Number.isFinite(Number(raw.stamina))) state.stamina = clampNumber(raw.stamina, 0, 120, Number(raw.stamina));
-  if (raw.alive !== undefined) state.alive = !!raw.alive;
-  if (raw.downed !== undefined) state.downed = !!raw.downed;
-  if (raw.spectator !== undefined) state.spectator = !!raw.spectator;
-  if (typeof raw.teamId === "number" && Number.isFinite(raw.teamId)) state.teamId = Math.round(raw.teamId);
   if (typeof raw.teamColor === "string") state.teamColor = raw.teamColor.slice(0, 32);
   if (typeof raw.weapon === "string") state.weapon = raw.weapon.slice(0, 24);
   if (typeof raw.mode === "string") state.mode = raw.mode.slice(0, 16);
@@ -161,6 +91,20 @@ const sendPartyStates = (party, socket) => {
   if (!party || !socket) return;
   const payload = getActiveStates(party).filter((entry) => entry.id !== socket.id);
   if (payload.length) socket.emit("state:bulk", payload);
+};
+
+const ensureDisplayName = (socket, maybeName) => {
+  const sanitized = sanitizeName(maybeName);
+  if (sanitized) {
+    socket.data.displayName = sanitized;
+    return sanitized;
+  }
+  if (typeof socket.data.displayName === "string" && socket.data.displayName.trim()) {
+    return socket.data.displayName;
+  }
+  const fallback = `Player-${socket.id.slice(0, 5)}`;
+  socket.data.displayName = fallback;
+  return fallback;
 };
 
 const generatePartyCode = () => {
