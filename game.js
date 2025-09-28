@@ -104,9 +104,7 @@
   const randi = (a, b) => Math.floor(rand(a, b));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  const RIGHT_ANGLE = Math.PI / 2;
 
-  const randomRightAngle = () => RIGHT_ANGLE * randi(0, 4);
 
   const dist2 = (x1, y1, x2, y2) => {
     const dx = x1 - x2, dy = y1 - y2; return dx * dx + dy * dy;
@@ -598,7 +596,7 @@
       const r = randi(26, 42);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.bushes.push({ x, y, r, rot: randomRightAngle() });
+      world.bushes.push({ x, y, r, rot: 0 });
     }
     // Trees (decor)
     world.trees = [];
@@ -606,7 +604,7 @@
       const r = randi(32, 54);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.trees.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.88 });
+      world.trees.push({ x, y, r, rot: 0, hitboxScale: 0.88 });
     }
     // Stones (decor)
     world.stones = [];
@@ -614,7 +612,7 @@
       const r = randi(22, 34);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.stones.push({ x, y, r, rot: randomRightAngle(), hitboxScale: 0.72 });
+      world.stones.push({ x, y, r, rot: 0, hitboxScale: 0.72 });
     }
     // Crates now ride on weapon pickups for visuals
     world.crates = [];
@@ -623,7 +621,7 @@
       const r = randi(35, 60);
       const x = randi(r+10, CONFIG.mapW-r-10);
       const y = randi(r+10, CONFIG.mapH-r-10);
-      world.puddles.push({ x, y, r, rot: randomRightAngle() });
+      world.puddles.push({ x, y, r, rot: 0 });
     }
 
     // Pickups
@@ -1821,8 +1819,12 @@
         drawArrow(remote, remote.teamColor || '#8bbcff');
       }
     }
-    // HUD text (clean header)
-    const aliveBots = world.bots.filter(b=>b.alive).length; const aliveRemotes = Array.from(world.remotePlayers.values()).filter(r => r && r.alive && !r.spectator).length;
+        // HUD text (clean header)
+    const teamId = p ? p.teamId : null;
+    const hasRemotePlayers = world.remotePlayers && world.remotePlayers.size;
+    const filterToAllies = hasRemotePlayers && teamId != null;
+    const aliveBots = world.bots.filter((bot) => bot.alive && (!filterToAllies || bot.teamId === teamId)).length;
+    const aliveRemotes = Array.from(world.remotePlayers.values()).filter((remote) => remote && remote.alive && !remote.spectator && (!filterToAllies || remote.teamId === teamId)).length;
     const aliveCount = aliveBots + aliveRemotes + (p && p.alive ? 1 : 0);
     const W = p ? WEAPONS[p.weapon] : WEAPONS.rifle;
     let zoneTxt = `Zone: ${world.phase+1}/${CONFIG.zone.phases}`;
@@ -1846,10 +1848,22 @@
     const sx = mmW / CONFIG.mapW, sy = mmH / CONFIG.mapH;
     ctx.beginPath(); ctx.strokeStyle = 'rgba(80,200,255,0.8)';
     ctx.arc(world.zone.x*sx, world.zone.y*sy, world.zone.r*sx, 0, Math.PI*2); ctx.stroke();
-    for (const b of world.bots) if (b.alive) { ctx.fillStyle = b.teamColor || 'rgba(247,113,113,0.9)'; ctx.fillRect(b.x*sx-1, b.y*sy-1, 2, 2); }
-    for (const remote of world.remotePlayers.values()) { if (!remote || remote.spectator) continue; if (!remote.alive && !remote.downed) continue; ctx.fillStyle = remote.teamColor || '#8bbcff'; ctx.fillRect(remote.x*sx-1, remote.y*sy-1, 2, 2); }
+    for (const bot of world.bots) {
+      if (!bot.alive) continue;
+      if (filterToAllies && bot.teamId !== teamId) continue;
+      ctx.fillStyle = bot.teamColor || 'rgba(247,113,113,0.9)';
+      ctx.fillRect(bot.x*sx-1, bot.y*sy-1, 2, 2);
+    }
+    for (const remote of world.remotePlayers.values()) {
+      if (!remote || remote.spectator) continue;
+      if (!remote.alive && !remote.downed) continue;
+      if (filterToAllies && remote.teamId !== teamId) continue;
+      ctx.fillStyle = remote.teamColor || '#8bbcff';
+      ctx.fillRect(remote.x*sx-1, remote.y*sy-1, 2, 2);
+    }
     if (p) { ctx.fillStyle = p.teamColor || '#74f7a9'; ctx.fillRect(p.x*sx-2, p.y*sy-2, 4, 4); }
     ctx.restore();
+
 
     // Slots panel (bottom-right text 1..5)
     const lines = [];
