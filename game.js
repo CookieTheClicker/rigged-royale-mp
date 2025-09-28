@@ -96,7 +96,11 @@
   fitCanvas();
 
   // --- Utils ---
-  const rand = (a, b) => a + Math.random() * (b - a);
+  let randomSource = Math.random;
+  const setRandomSource = (fn) => {
+    randomSource = typeof fn === 'function' ? fn : Math.random;
+  };
+  const rand = (a, b) => a + randomSource() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const dist2 = (x1, y1, x2, y2) => {
@@ -106,6 +110,23 @@
   const mag = (x, y) => Math.hypot(x, y);
   const norm = (x, y) => { const m = Math.hypot(x, y) || 1; return [x / m, y / m]; };
   const ang = (x, y) => Math.atan2(y, x);
+
+  function makeSeededRng(seed) {
+    let h = 2166136261 >>> 0;
+    const text = String(seed || "");
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return () => {
+      h += h << 13;
+      h ^= h >>> 7;
+      h += h << 3;
+      h ^= h >>> 17;
+      h += h << 5;
+      return ((h >>> 0) & 0xffffffff) / 0xffffffff;
+    };
+  }
 
   function hash2(x, y) {
     const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
@@ -808,27 +829,98 @@
   }
 
   // --- Game Flow ---
-  function startGame() {
-    world.time = 0;
-    world.phase = 0;
-    world.phaseTimer = CONFIG.zone.holdTime;
-    world.zone.r = CONFIG.zone.startRadius;
-    world.zone.rTarget = CONFIG.zone.startRadius;
-    world.zoneState = { mode: 'hold', timer: CONFIG.zone.holdTime, t: 0, T: 0, startR: world.zone.r, targetR: world.zone.r };
-    world.diff = DIFFICULTY[selectedDiff] || DIFFICULTY.insane;
-    world.mode = TEAM_MODES[selectedMode] || TEAM_MODES.solos;
-    generateWorld();
-    world.bullets = [];
-    world.bots = [];
-    clearRemotePlayers();
-    world.teams = [];
-    let colorIdx = 0; const nextColor = () => TEAM_COLORS[colorIdx++ % TEAM_COLORS.length];
-    const px = randi(200, CONFIG.mapW-200), py = randi(200, CONFIG.mapH-200);
-    world.player = makePlayer(px, py);
-    world.graceTimer = 1.0;
-    // Player team
-    const teamSize = world.mode.teamSize;
-    const playerTeam = makeTeam(0, nextColor());
+  function computePartySpawn(matchSeed, partyCtx, selfId) {
+    if (!matchSeed || !matchSeed.seed || !partyCtx || !partyCtx.code) return null;
+    const baseKey = `${partyCtx.code}:${matchSeed.seed}:${matchSeed.counter || 0}`;
+    const baseRng = makeSeededRng(baseKey);
+    const centerX = clamp(Math.round(200 + baseRng() * (CONFIG.mapW - 400)), 200, CONFIG.mapW - 200);
+    const centerY = clamp(Math.round(200 + baseRng() * (CONFIG.mapH - 400)), 200, CONFIG.mapH - 200);
+    if (!selfId) {
+      return { x: centerX, y: centerY };
+    }
+    const memberRng = makeSeededRng(`${baseKey}:${selfId}`);
+    const angle = memberRng() * Math.PI * 2;
+    const radius = 50 + memberRng() * 90;
+    const spawnX = clamp(centerX + Math.cos(angle) * radius, 120, CONFIG.mapW - 120);
+    const spawnY = clamp(centerY + Math.sin(angle) * radius, 120, CONFIG.mapH - 120);
+    return { x: spawnX, y: spawnY };
+  }
+
+  async function startGame() {
+    let spawnOverride = null;
+    let seededRng = null;
+    const mpBridge = (window.RiggedRoyale && window.RiggedRoyale.mp) || null;
+    let started = false;
+    let partyCtx = null;
+    let selfId = null;
+    if (mpBridge) {
+      if (typeof mpBridge.getPartyContext === "function") {
+        partyCtx = mpBridge.getPartyContext();
+      }
+      if (typeof mpBridge.getSelfId === "function") {
+        selfId = mpBridge.getSelfId();
+      }
+    }
+    const inParty = partyCtx && partyCtx.code;
+    const isHost = inParty && partyCtx && partyCtx.hostId === selfId;
+    if (mpBridge) {
+      try {
+        const ensureSeed = typeof mpBridge.ensureMatchSeed === 'function'
+          ? mpBridge.ensureMatchSeed({ fresh: true })
+          : null;
+        const info = ensureSeed ? await ensureSeed : null;
+        if (!info && inParty && !isHost) {
+          if (typeof mpBridge.notifyAwaitingHost === 'function') {
+            mpBridge.notifyAwaitingHost();
+          }
+          subtitle.textContent = 'Waiting for host to start the match';
+          showOverlay();
+          return false;
+        }
+        if (info) {
+          spawnOverride = computePartySpawn(info, partyCtx, selfId);
+          const seedKey = `${info.seed}:${info.counter || 0}:${partyCtx && partyCtx.code ? partyCtx.code : ''}`;
+          seededRng = makeSeededRng(seedKey);
+          if (typeof mpBridge.markSeedActive === 'function') {
+            mpBridge.markSeedActive(info.counter);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to synchronize multiplayer match seed', err);
+      }
+    }
+
+    let seededApplied = false;
+    if (seededRng) {
+      setRandomSource(seededRng);
+      seededApplied = true;
+    } else {
+      setRandomSource(null);
+    }
+
+    try {
+      world.time = 0;
+      world.phase = 0;
+      world.phaseTimer = CONFIG.zone.holdTime;
+      world.zone.r = CONFIG.zone.startRadius;
+      world.zone.rTarget = CONFIG.zone.startRadius;
+      world.zoneState = { mode: 'hold', timer: CONFIG.zone.holdTime, t: 0, T: 0, startR: world.zone.r, targetR: world.zone.r };
+      world.diff = DIFFICULTY[selectedDiff] || DIFFICULTY.insane;
+      world.mode = TEAM_MODES[selectedMode] || TEAM_MODES.solos;
+      generateWorld();
+      world.bullets = [];
+      world.bots = [];
+      clearRemotePlayers();
+      world.teams = [];
+      let colorIdx = 0; const nextColor = () => TEAM_COLORS[colorIdx++ % TEAM_COLORS.length];
+      const spawn = spawnOverride || { x: randi(200, CONFIG.mapW-200), y: randi(200, CONFIG.mapH-200) };
+      const px = clamp(spawn.x, 120, CONFIG.mapW - 120);
+      const py = clamp(spawn.y, 120, CONFIG.mapH - 120);
+      world.player = makePlayer(px, py);
+      world.graceTimer = 1.0;
+      // Player team
+      const teamSize = world.mode.teamSize;
+      const playerTeam = makeTeam(0, nextColor());
     world.teams.push(playerTeam);
     assignTeam(world.player, playerTeam);
     // Teammates
@@ -856,6 +948,13 @@
     }
     hideOverlay();
     world.running = true; world.paused = false;
+    started = true;
+    } finally {
+      if (seededApplied) {
+        setRandomSource(null);
+      }
+    }
+    return started;
   }
 
   // --- Weapons & Inventory helpers ---
@@ -944,13 +1043,26 @@
       bodyEl.classList.remove('playing');
     } catch(_) {}
   }
-  playBtn.addEventListener('click', () => {
+  playBtn.addEventListener('click', async () => {
     hideOverlay();
-    if (!world.running || !world.player) startGame(); else { world.paused = false; }
-    // double-check in next frame
-    requestAnimationFrame(() => hideOverlay());
+    let started = true;
+    if (!world.running || !world.player) {
+      started = await startGame();
+    } else {
+      world.paused = false;
+    }
+    if (started) {
+      // double-check in next frame
+      requestAnimationFrame(() => hideOverlay());
+    }
   });
-  restartBtn.addEventListener('click', () => { startGame(); saveDiff(); saveMode(); });
+  restartBtn.addEventListener('click', async () => {
+    const started = await startGame();
+    if (started) {
+      saveDiff();
+      saveMode();
+    }
+  });
   spectateBtn.addEventListener('click', () => {
     if (!world.player) return;
     world.spectating = true;
