@@ -921,12 +921,63 @@
     });
   }
 
-  const script = document.createElement("script");
-  script.src = "https://cdn.socket.io/4.7.5/socket.io.min.js";
-  script.onload = initSocket;
-  script.onerror = () =>
-    setPartyMessage("Failed to load multiplayer client", "error");
-  document.head.appendChild(script);
+  function bootstrapSocketIo() {
+    if (typeof window.io === "function") {
+      initSocket();
+      return;
+    }
+
+    const makeSrc = (base) => {
+      if (!base && base !== "") return null;
+      if (base === "") return "/socket.io/socket.io.js";
+      return base.endsWith("/")
+        ? `${base}socket.io/socket.io.js`
+        : `${base}/socket.io/socket.io.js`;
+    };
+
+    const candidates = [];
+    const pushCandidate = (src) => {
+      if (!src || candidates.includes(src)) return;
+      candidates.push(src);
+    };
+    if (SERVER_URL) {
+      const normalized = SERVER_URL.replace(/\/$/, "");
+      pushCandidate(makeSrc(normalized));
+    }
+    pushCandidate(makeSrc(""));
+    pushCandidate("https://cdn.socket.io/4.7.5/socket.io.min.js");
+
+    const tryNext = () => {
+      if (typeof window.io === "function") {
+        initSocket();
+        return;
+      }
+      const nextSrc = candidates.shift();
+      if (!nextSrc) {
+        setPartyMessage("Failed to load multiplayer client", "error");
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = nextSrc;
+      script.async = true;
+      script.onload = () => {
+        if (typeof window.io === "function") {
+          initSocket();
+        } else {
+          tryNext();
+        }
+      };
+      script.onerror = () => {
+        script.remove();
+        tryNext();
+      };
+      document.head.appendChild(script);
+    };
+
+    tryNext();
+  }
+
+  bootstrapSocketIo();
 
   updateStatus();
   updatePartyUI();
