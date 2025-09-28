@@ -637,19 +637,42 @@
     }
   }
 
-  // --- Prop Helpers ---
+  // --- Prop Helpers ---
+
   function getHitboxRadius(obj, baseScale = 1, useHitboxScale = true) {
     if (!obj) return 0;
     const base = obj.r || 0;
     const applied = useHitboxScale && obj.hitboxScale != null ? obj.hitboxScale : 1;
     return base * applied * baseScale;
   }
+
   function circleContains(obj, x, y, pad = 0) {
     if (!obj) return false;
     const r = getHitboxRadius(obj) + pad;
     if (r <= 0) return false;
     return dist2(obj.x, obj.y, x, y) <= r * r;
-  }
+  }
+
+  function circlesOverlap(a, b, pad = 0, useHitboxScale = true) {
+    if (!a || !b) return false;
+    const total = getHitboxRadius(a, 1, useHitboxScale) + getHitboxRadius(b, 1, useHitboxScale) + pad;
+    if (total <= 0) return false;
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy < total * total;
+  }
+
+  function circleRectOverlap(circle, rect, pad = 0, useHitboxScale = true) {
+    if (!circle || !rect) return false;
+    const r = getHitboxRadius(circle, 1, useHitboxScale) + pad;
+    if (r <= 0) return false;
+    const cx = clamp(circle.x, rect.x, rect.x + rect.w);
+    const cy = clamp(circle.y, rect.y, rect.y + rect.h);
+    const dx = circle.x - cx;
+    const dy = circle.y - cy;
+    return dx * dx + dy * dy < r * r;
+  }
+
   function findPropAt(list, x, y, pad = 0) {
     if (!list) return null;
     for (const item of list) {
